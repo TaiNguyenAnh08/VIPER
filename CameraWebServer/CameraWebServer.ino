@@ -5,6 +5,21 @@
 #include "img_converters.h"
 
 // ===========================
+// VIPER Phase 2: BRIGHTNESS-BASED Obstacle Detection
+// ===========================
+// Logic: Phát hiện vật cản dựa trên độ sáng (brightness) thay vì màu sắc
+// - WHITE (trắng/sáng): brightness > 0.65, R≈G≈B → Rẽ PHẢI
+// - DARK (đen/tối): brightness < 0.35 → Rẽ TRÁI
+// - NONE: Không nhận diện được → Rẽ TRÁI (mặc định)
+//
+// Ưu điểm so với HSV color detection:
+// ✓ Đơn giản hơn - không cần tính Hue phức tạp
+// ✓ Nhanh hơn - chỉ cần tính trung bình RGB
+// ✓ Tin cậy hơn - ít bị ảnh hưởng bởi lighting
+// ✓ Dễ test - dùng giấy trắng/đen hoặc vật sáng/tối bất kỳ
+// ===========================
+
+// ===========================
 // Select camera model in board_config.h
 // ===========================
 #include "board_config.h"
@@ -14,6 +29,11 @@
 // ===========================
 const char *ssid = "VIPER";
 const char *password = "12345678";
+
+// TensorFlow server IP (Python server on PC/Laptop)
+// Change this to your PC's IP when connected to VIPER WiFi
+#define TF_SERVER_IP "192.168.4.2"
+#define TF_SERVER_PORT 5000
 
 // Web server cho API endpoint
 WebServer apiServer(80);
@@ -119,9 +139,10 @@ void setup() {
   setupLedFlash();
 #endif
 
-  // ===== STATIC IP: cố định IP = 192.168.4.2 (tránh DHCP cấp IP ngẫu nhiên) =====
+  // ===== STATIC IP: cố định IP = 192.168.4.3 (tránh DHCP cấp IP ngẫu nhiên) =====
+  // Laptop Python server = 192.168.4.2, ESP32-CAM = 192.168.4.3
   WiFi.config(
-    IPAddress(192, 168, 4, 2),   // IP tĩnh cho ESP32-CAM
+    IPAddress(192, 168, 4, 3),   // IP tĩnh cho ESP32-CAM
     IPAddress(192, 168, 4, 1),   // Gateway = VIPER AP
     IPAddress(255, 255, 255, 0)  // Subnet mask
   );
@@ -152,8 +173,18 @@ void setup() {
     Serial.printf("[API] Responded: %s\n", json.c_str());
   });
   
+  // API endpoint: /detect_shape - TensorFlow shape detection
+  apiServer.on("/detect_shape", HTTP_GET, []() {
+    Serial.println("\n[API] /detect_shape called by VIPER");
+    String shape = detectShapeWithTensorFlow();
+    String json = "{\"shape\":\"" + shape + "\"}";
+    apiServer.send(200, "application/json", json);
+    Serial.printf("[API] Responded: %s\n", json.c_str());
+  });
+  
   apiServer.begin();
   Serial.println("[API] Color detection API ready at /detect_color");
+  Serial.println("[API] TensorFlow shape API ready at /detect_shape");
 
   // ================= START CAMERA STREAMING SERVER (Port 81) =================
   startCameraServer();
@@ -166,9 +197,16 @@ void setup() {
   Serial.print("Control URL: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/");
-  Serial.print("API: http://");
+  Serial.print("API 1 (brightness): http://");
   Serial.print(WiFi.localIP());
   Serial.println("/detect_color");
+  Serial.print("API 2 (TensorFlow): http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/detect_shape");
+  Serial.print("TF Server: http://");
+  Serial.print(TF_SERVER_IP);
+  Serial.print(":");
+  Serial.println(TF_SERVER_PORT);
   Serial.println("===========================\n");
 }
 
@@ -177,24 +215,20 @@ String lastSentColor = "none";
 unsigned long lastDetectionTime = 0;
 const unsigned long DETECTION_INTERVAL = 5000; // 5 giây để streaming ổn định hơn
 
-// DETECT ON-DEMAND: per-pixel HSV classification
-// Mỗi pixel được phân loại riêng → đếm tỉ lệ pixel đỏ/xanh trong ROI
-// Approach này chính xác ngay cả khi vật cản chỉ chiếm một phần khung hình
+// DETECT ON-DEMAND: per-pixel brightness classification
+// Mỗi pixel được phân loại riêng → đếm tỉ lệ pixel trắng/tối trong ROI
+// Giữ nguyên QVGA (320x240) để camera không nhảy kích thước khi detect
+// → Chậm hơn QQVGA nhưng NÉT HƠN và không bị resize
 String detectColorNow() {
   sensor_t *s = esp_camera_sensor_get();
   if (!s) return "none";
 
-  framesize_t old_size = s->status.framesize;
-  s->set_framesize(s, FRAMESIZE_QQVGA);  // 160x120, stride=480 (4-byte aligned, no padding)
-  delay(60);
-
-  // Xả frame cũ (có thể là QVGA từ streaming)
+  // Xả frame cũ
   camera_fb_t *stale = esp_camera_fb_get();
   if (stale) esp_camera_fb_return(stale);
 
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
-    s->set_framesize(s, old_size);
     Serial.println("[DETECT] Frame capture failed");
     return "none";
   }
@@ -210,7 +244,6 @@ String detectColorNow() {
   size_t   rgb_len = 0;
   bool ok = frame2bmp(fb, &rgb_buf, &rgb_len);
   esp_camera_fb_return(fb);
-  s->set_framesize(s, old_size);
 
   if (!ok || !rgb_buf) {
     Serial.println("[DETECT] frame2bmp failed");
@@ -226,7 +259,7 @@ String detectColorNow() {
   int x0 = fw / 5, x1 = fw * 4 / 5;
   int y0 = fh / 5, y1 = fh * 4 / 5;
 
-  int redPx = 0, greenPx = 0, totalPx = 0;
+  int whitePx = 0, darkPx = 0, totalPx = 0;
 
   for (int y = y0; y < y1; y += 2) {
     for (int x = x0; x < x1; x += 2) {
@@ -238,84 +271,149 @@ String detectColorNow() {
       float g = pix[idx + 1] / 255.0f;
       float r = pix[idx + 2] / 255.0f;
 
-      float vmax  = max(r, max(g, b));
-      float vmin  = min(r, min(g, b));
-      float delta = vmax - vmin;
-
-      // Bỏ qua pixel quá tối (<15%) hoặc không bão hoà (<12%)
-      if (vmax < 0.15f || delta < 0.12f) continue;
-
-      float sat = delta / vmax;
-      if (sat < 0.22f) continue;   // xám / trắng / nền → bỏ
-
-      // Tính Hue
-      float hue = 0;
-      if      (vmax == r) hue = 60.0f * fmodf((g - b) / delta, 6.0f);
-      else if (vmax == g) hue = 60.0f * ((b - r) / delta + 2.0f);
-      else                hue = 60.0f * ((r - g) / delta + 4.0f);
-      if (hue < 0) hue += 360.0f;
-
+      // Tính brightness (giá trị trung bình RGB)
+      float brightness = (r + g + b) / 3.0f;
+      
       totalPx++;
 
-      // ĐỎ: H ∈ [0,28] ∪ [332,360]
-      if (hue <= 28.0f || hue >= 332.0f)           redPx++;
-      // XANH LÁ: H ∈ [80,170]
-      else if (hue >= 80.0f && hue <= 170.0f) greenPx++;
+      // TRẮNG: brightness cao (>0.50) và không quá màu (R≈G≈B)
+      // Giảm ngưỡng từ 0.65 xuống 0.50 cho camera chất lượng thấp
+      float maxRGB = max(r, max(g, b));
+      float minRGB = min(r, min(g, b));
+      float delta = maxRGB - minRGB;
+      
+      if (brightness > 0.50f && delta < 0.30f) {
+        // Sáng và gần như xám → TRẮNG
+        whitePx++;
+      }
+      // ĐEN/TỐI: brightness thấp (<0.45)
+      // Tăng ngưỡng từ 0.35 lên 0.45 để dễ detect hơn
+      else if (brightness < 0.45f) {
+        darkPx++;
+      }
     }
   }
 
   free(rgb_buf);
 
-  if (totalPx < 6) {
-    Serial.println("[DETECT] Too few saturated pixels (check lighting)");
+  if (totalPx < 10) {
+    Serial.println("[DETECT] Too few pixels sampled");
     return "none";
   }
 
-  float redRatio   = (float)redPx   / totalPx;
-  float greenRatio = (float)greenPx / totalPx;
+  float whiteRatio = (float)whitePx / totalPx;
+  float darkRatio  = (float)darkPx  / totalPx;
 
-  Serial.printf("[DETECT] saturated=%d  red=%d(%.0f%%)  green=%d(%.0f%%)\n",
-                totalPx, redPx, redRatio * 100, greenPx, greenRatio * 100);
+  Serial.printf("[DETECT] total=%d  white=%d(%.0f%%)  dark=%d(%.0f%%)\n",
+                totalPx, whitePx, whiteRatio * 100, darkPx, darkRatio * 100);
 
-  // Cần ≥18% pixel có màu để kết luận (vật cản chỉ cần chiếm ~1/5 ROI)
-  const float TH = 0.18f;
-  if (redRatio   >= TH && redRatio   > greenRatio) { Serial.println("[DETECT] → RED");   return "red";   }
-  if (greenRatio >= TH && greenRatio > redRatio)   { Serial.println("[DETECT] → GREEN"); return "green"; }
+  // Giảm threshold từ 20% xuống 12% để dễ detect với camera chất lượng thấp
+  const float TH = 0.12f;
+  if (whiteRatio >= TH && whiteRatio > darkRatio) { 
+    Serial.println("[DETECT] → WHITE (sáng)"); 
+    return "white"; 
+  }
+  if (darkRatio >= TH && darkRatio > whiteRatio) { 
+    Serial.println("[DETECT] → DARK (tối)"); 
+    return "dark"; 
+  }
 
-  Serial.printf("[DETECT] → none (red=%.0f%% green=%.0f%% < %.0f%% threshold)\n",
-                redRatio*100, greenRatio*100, TH*100);
+  Serial.printf("[DETECT] → none (white=%.0f%% dark=%.0f%% < %.0f%% threshold)\n",
+                whiteRatio*100, darkRatio*100, TH*100);
   return "none";
 }
 
 // ================= MULTI-FRAME VOTING for Reliability =================
 String detectColorWithVoting() {
   const int NUM_SAMPLES = 3;  // 3 frames để vote chính xác hơn
-  int counts[4] = {0, 0, 0, 0};  // [red, green, yellow, none]
+  int counts[3] = {0, 0, 0};  // [white, dark, none]
 
-  Serial.println("\n[VOTING] 3-frame color detection...");
+  Serial.println("\n[VOTING] 3-frame brightness detection...");
 
   for (int i = 0; i < NUM_SAMPLES; i++) {
     String color = detectColorNow();
-    if      (color == "red")    counts[0]++;
-    else if (color == "green")  counts[1]++;
-    else if (color == "yellow") counts[2]++;
-    else                        counts[3]++;
+    if      (color == "white") counts[0]++;
+    else if (color == "dark")  counts[1]++;
+    else                       counts[2]++;
 
     if (i < NUM_SAMPLES - 1) delay(80);  // Chờ frame mới
   }
 
-  Serial.printf("[VOTING] red=%d green=%d yellow=%d none=%d\n",
-                counts[0], counts[1], counts[2], counts[3]);
+  Serial.printf("[VOTING] white=%d dark=%d none=%d\n",
+                counts[0], counts[1], counts[2]);
 
   // Cần ít nhất 2/3 đồng ý
-  if (counts[0] >= 2) return "red";
-  if (counts[1] >= 2) return "green";
-  if (counts[2] >= 2) return "yellow";
+  if (counts[0] >= 2) return "white";
+  if (counts[1] >= 2) return "dark";
 
-  // Chấp nhận 1/3 nếu không có màu nào khác cạnh tranh
-  if (counts[0] == 1 && counts[1] == 0 && counts[2] == 0) return "red";
-  if (counts[1] == 1 && counts[0] == 0 && counts[2] == 0) return "green";
+  // Chấp nhận 1/3 nếu không có kết quả khác cạnh tranh
+  if (counts[0] == 1 && counts[1] == 0) return "white";
+  if (counts[1] == 1 && counts[0] == 0) return "dark";
 
+  return "none";
+}
+
+// ================= TENSORFLOW SHAPE DETECTION =================
+// Captures JPEG image and POSTs to Python TensorFlow server
+// Returns: "left", "right", or "none"
+String detectShapeWithTensorFlow() {
+  Serial.println("\n[TF] Capturing image for shape detection...");
+  
+  // Flush old frame
+  camera_fb_t *stale = esp_camera_fb_get();
+  if (stale) esp_camera_fb_return(stale);
+  
+  // Capture fresh JPEG frame
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("[TF] ❌ Frame capture failed");
+    return "none";
+  }
+  
+  Serial.printf("[TF] Captured %dx%d JPEG, %d bytes\n", 
+                fb->width, fb->height, fb->len);
+  
+  // POST to Python server
+  HTTPClient http;
+  String url = String("http://") + TF_SERVER_IP + ":" + String(TF_SERVER_PORT) + "/predict";
+  
+  Serial.printf("[TF] POSTing to %s\n", url.c_str());
+  
+  http.begin(url);
+  http.addHeader("Content-Type", "image/jpeg");
+  http.setTimeout(5000);  // 5s timeout
+  
+  int httpCode = http.POST(fb->buf, fb->len);
+  
+  esp_camera_fb_return(fb);  // Release frame buffer immediately
+  
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    Serial.printf("[TF] Response: %s\n", payload.c_str());
+    
+    // Parse JSON: {"shape":"left","confidence":180}
+    // Simple parsing without ArduinoJson to save memory
+    int shapeIdx = payload.indexOf("\"shape\":\"");
+    if (shapeIdx >= 0) {
+      shapeIdx += 9;  // Skip to value
+      int endIdx = payload.indexOf("\"", shapeIdx);
+      if (endIdx > shapeIdx) {
+        String shape = payload.substring(shapeIdx, endIdx);
+        Serial.printf("[TF] ✅ Detected shape: %s\n", shape.c_str());
+        http.end();
+        return shape;
+      }
+    }
+    
+    Serial.println("[TF] ⚠️  Failed to parse response");
+  } else {
+    Serial.printf("[TF] ❌ HTTP error: %d\n", httpCode);
+    if (httpCode > 0) {
+      Serial.printf("[TF] Response: %s\n", http.getString().c_str());
+    }
+  }
+  
+  http.end();
   return "none";
 }
 

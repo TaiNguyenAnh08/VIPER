@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# TensorFlow model (quá lớn, không commit)
+*.tflite
+*.h5
+*.pb
+
+# Test images
+test_*.jpg
+test_*.png
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

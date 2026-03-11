@@ -102,14 +102,22 @@ void setup() {
     String m = server.arg("m");
 
     if (m=="line") {
-      stopCar();
-      do_line_setup();
+      // Switching to LINE mode
+      do_line_abort();  // Dừng manual mode trước (nếu đang chạy)
+      stopCar();        // Dừng motor
+      delay(200);       // Cho motor dừng hẳn
+      
       currentMode = MODE_LINE;
       line_mode = true;
+      do_line_setup();  // Setup line mode
+      Serial.println("[MODE] Switched to LINE FOLLOWING");
+      
     } else {
-      // CRITICAL FIX: Ph\u1ea3i g\u1ecdi do_line_abort() \u0111\u1ec3 d\u1eebng t\u1ea5t c\u1ea3 movement trong LINE mode!
-      do_line_abort();  // Set g_line_enabled = false + motorsStop()
-      stopCar();        // \u0110\u1ea3m b\u1ea3o motor d\u1eebng
+      // Switching to MANUAL mode
+      do_line_abort();  // Set g_line_enabled = false (thoát avoidance ngay khi có thể)
+      stopCar();        // Dừng motor
+      delay(200);       // Cho motor dừng hẳn
+      
       currentMode = MODE_MANUAL;
       line_mode = false;
       Serial.println("[MODE] Switched to MANUAL - Line following ABORTED");
