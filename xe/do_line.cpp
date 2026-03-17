@@ -165,6 +165,10 @@ inline bool isValidLineSample5(bool L2,bool L1,bool M,bool R1,bool R2){
   return !(allH || allL);
 }
 
+// ================= Forward declarations =================
+inline void resetPID(PID &pid);
+inline void resetBothPID();
+
 // Shaper PWM: deadband + slew
 static inline int shape_pwm(int target, int prev){
   int s = target;

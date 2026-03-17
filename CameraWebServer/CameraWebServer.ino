@@ -182,9 +182,26 @@ void setup() {
     Serial.printf("[API] Responded: %s\n", json.c_str());
   });
   
+  // API endpoint: /capture - Get raw JPEG frame for training image capture
+  apiServer.on("/capture", HTTP_GET, []() {
+    Serial.println("\n[API] /capture called - returning JPEG frame");
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      apiServer.send(500, "text/plain", "Camera capture failed");
+      return;
+    }
+    apiServer.sendHeader("Content-Type", "image/jpeg");
+    apiServer.sendHeader("Content-Length", String(fb->len));
+    apiServer.send(200);
+    apiServer.sendContent((const char *)fb->buf, fb->len);
+    esp_camera_fb_return(fb);
+    Serial.printf("[API] /capture responded with %d bytes\n", fb->len);
+  });
+  
   apiServer.begin();
   Serial.println("[API] Color detection API ready at /detect_color");
   Serial.println("[API] TensorFlow shape API ready at /detect_shape");
+  Serial.println("[API] JPEG capture API ready at /capture");
 
   // ================= START CAMERA STREAMING SERVER (Port 81) =================
   startCameraServer();
