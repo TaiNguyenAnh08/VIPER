@@ -5,19 +5,19 @@
 #include "img_converters.h"
 
 // ===========================
-// VIPER Phase 2: BRIGHTNESS-BASED Obstacle Detection
+// VIPER Phase 2: SHAPE-BASED Obstacle Detection
 // ===========================
-// Logic: Phát hiện vật cản dựa trên độ sáng (brightness) thay vì màu sắc
-// - WHITE (trắng/sáng): brightness > 0.65, R≈G≈B → Rẽ PHẢI
-// - DARK (đen/tối): brightness < 0.35 → Rẽ TRÁI
+// Logic: Phát hiện vật cản dựa trên hình dạng (OpenCV)
+// - CIRCLE (tròn): OpenCV HoughCircles → Rẽ PHẢI
+// - SQUARE (vuông): OpenCV Contour analysis → Rẽ TRÁI
 // - NONE: Không nhận diện được → Rẽ TRÁI (mặc định)
 //
-// Ưu điểm so với HSV color detection:
-// ✓ Đơn giản hơn - không cần tính Hue phức tạp
-// ✓ Nhanh hơn - chỉ cần tính trung bình RGB
-// ✓ Tin cậy hơn - ít bị ảnh hưởng bởi lighting
-// ✓ Dễ test - dùng giấy trắng/đen hoặc vật sáng/tối bất kỳ
-// ===========================
+// Ưu điểm:
+// ✓ Chính xác cao - không bị ảnh hưởng bởi lighting
+// ✓ Rõ ràng - phân biệt dạng hình học thực tế
+// ✓ Không cần training - dùng OpenCV image processing
+// ✓ Vật cản: hình vuông/tròn đen trên nền trắng (8cm)
+// =============================
 
 // ===========================
 // Select camera model in board_config.h
@@ -30,7 +30,7 @@
 const char *ssid = "VIPER";
 const char *password = "12345678";
 
-// TensorFlow server IP (Python server on PC/Laptop)
+// OpenCV server IP (Python server on PC/Laptop)
 // Change this to your PC's IP when connected to VIPER WiFi
 #define TF_SERVER_IP "192.168.4.2"
 #define TF_SERVER_PORT 5000
@@ -78,14 +78,14 @@ void setup() {
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.grab_mode = CAMERA_GRAB_LATEST;  // Luôn lấy frame mới nhất
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;  // 12 = chất lượng tốt hơn cho color detection (cân bằng giữa quality và speed)
+  config.jpeg_quality = 15;  // 15 = balanced quality/speed (reduced from 12 for less lag)
   config.fb_count = 2;  // Double buffering cho speed
 
   // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
   //                      for larger pre-allocated frame buffer.
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
-      config.jpeg_quality = 10;  // 10 = chất lượng tốt cho màu sắc rõ nét
+      config.jpeg_quality = 15;  // 15 = faster encoding, reduced lag (was 10)
       config.fb_count = 2;
       config.grab_mode = CAMERA_GRAB_LATEST;
     } else {
@@ -173,10 +173,10 @@ void setup() {
     Serial.printf("[API] Responded: %s\n", json.c_str());
   });
   
-  // API endpoint: /detect_shape - TensorFlow shape detection
+  // API endpoint: /detect_shape - OpenCV shape detection
   apiServer.on("/detect_shape", HTTP_GET, []() {
     Serial.println("\n[API] /detect_shape called by VIPER");
-    String shape = detectShapeWithTensorFlow();
+    String shape = detectShapeWithTensorFlow();  // Uses OpenCV backend
     String json = "{\"shape\":\"" + shape + "\"}";
     apiServer.send(200, "application/json", json);
     Serial.printf("[API] Responded: %s\n", json.c_str());
@@ -200,7 +200,7 @@ void setup() {
   
   apiServer.begin();
   Serial.println("[API] Color detection API ready at /detect_color");
-  Serial.println("[API] TensorFlow shape API ready at /detect_shape");
+  Serial.println("[API] OpenCV shape API ready at /detect_shape");
   Serial.println("[API] JPEG capture API ready at /capture");
 
   // ================= START CAMERA STREAMING SERVER (Port 81) =================
@@ -217,10 +217,10 @@ void setup() {
   Serial.print("API 1 (brightness): http://");
   Serial.print(WiFi.localIP());
   Serial.println("/detect_color");
-  Serial.print("API 2 (TensorFlow): http://");
+  Serial.print("API 2 (OpenCV): http://");
   Serial.print(WiFi.localIP());
   Serial.println("/detect_shape");
-  Serial.print("TF Server: http://");
+  Serial.print("Server: http://");
   Serial.print(TF_SERVER_IP);
   Serial.print(":");
   Serial.println(TF_SERVER_PORT);
@@ -370,9 +370,9 @@ String detectColorWithVoting() {
   return "none";
 }
 
-// ================= TENSORFLOW SHAPE DETECTION =================
-// Captures JPEG image and POSTs to Python TensorFlow server
-// Returns: "left", "right", or "none"
+// ================= OPENCV SHAPE DETECTION =================
+// Captures JPEG image and POSTs to Python OpenCV server
+// Returns: "circle", "square", or "none"
 String detectShapeWithTensorFlow() {
   Serial.println("\n[TF] Capturing image for shape detection...");
   

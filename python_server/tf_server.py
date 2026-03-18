@@ -1,13 +1,12 @@
 """
-TensorFlow Shape Detection Server for VIPER Robot
-Receives images from ESP32-CAM via WiFi and returns "left" or "right"
+OpenCV Shape Detection Server for VIPER Robot
+Detects circles (black on white) and squares using image processing
+Replaces TensorFlow with OpenCV for faster, simpler detection
 """
 
 from flask import Flask, request, jsonify
+import cv2
 import numpy as np
-import tensorflow as tf
-from PIL import Image
-import io
 import logging
 
 app = Flask(__name__)
@@ -16,109 +15,127 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load TensorFlow Lite model
-MODEL_PATH = 'shape_model.tflite'
-interpreter = None
-input_details = None
-output_details = None
+# ======================== OpenCV Shape Detection ========================
 
-def load_model():
-    global interpreter, input_details, output_details
+def detect_shape_opencv(image_bytes):
+    """
+    Detect circle or square from image bytes
+    Black shapes on white background
+    Returns: ("circle", confidence) or ("square", confidence) or ("none", 0)
+    """
     try:
-        interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
-        interpreter.allocate_tensors()
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
-        logger.info(f"✅ Model loaded successfully")
-        logger.info(f"   Input shape: {input_details[0]['shape']}")
-        logger.info(f"   Output shape: {output_details[0]['shape']}")
+        # Load image from bytes
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            logger.error("Failed to decode image")
+            return "none", 0
+        
+        logger.info(f"📸 Image shape: {img.shape}")
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Invert to handle black shapes on white background
+        inverted = cv2.bitwise_not(gray)
+        
+        # ==================== DETECT CIRCLE ====================
+        logger.info("🔵 Detecting circle...")
+        circles = cv2.HoughCircles(
+            inverted,
+            cv2.HOUGH_GRADIENT,
+            dp=1.0,
+            minDist=50,
+            param1=50,      # Canny edge detection threshold
+            param2=30,      # Accumulator threshold
+            minRadius=10,
+            maxRadius=200
+        )
+        
+        if circles is not None and len(circles[0]) > 0:
+            circle = circles[0][0]
+            center = (int(circle[0]), int(circle[1]))
+            radius = int(circle[2])
+            logger.info(f"✓ Circle found: center={center}, radius={radius}")
+            return "circle", 95
+        
+        # ==================== DETECT SQUARE ====================
+        logger.info("⬜ Detecting square...")
+        
+        # Apply threshold
+        _, thresh = cv2.threshold(inverted, 127, 255, cv2.THRESH_BINARY)
+        
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        
+        logger.info(f"   Found {len(contours)} contours")
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            
+            # Skip small noise
+            if area < 200:
+                continue
+            
+            # Approximate polygon
+            epsilon = 0.02 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            # 4 vertices = square/rectangle
+            num_vertices = len(approx)
+            
+            if num_vertices == 4:
+                logger.info(f"✓ Square found: area={area:.0f}, vertices={num_vertices}")
+                
+                # Check aspect ratio (should be roughly square)
+                x, y, w, h = cv2.boundingRect(approx)
+                aspect_ratio = float(w) / h if h != 0 else 0
+                
+                # Accept if aspect ratio close to 1.0 (±0.3)
+                if 0.7 <= aspect_ratio <= 1.3:
+                    return "square", 95
+        
+        logger.info("⚠️  No shape detected")
+        return "none", 0
+        
     except Exception as e:
-        logger.error(f"❌ Failed to load model: {e}")
-        raise
-
-def preprocess_image(image_bytes):
-    """
-    Convert image to 96x96 grayscale and normalize for model input
-    """
-    # Open image from bytes
-    img = Image.open(io.BytesIO(image_bytes))
-    
-    # Convert to grayscale
-    img = img.convert('L')
-    
-    # Resize to 96x96 (model input size)
-    img = img.resize((96, 96))
-    
-    # Convert to numpy array
-    img_array = np.array(img, dtype=np.float32)
-    
-    # Normalize to [-128, 127] range (int8 quantized model)
-    img_array = img_array - 128.0
-    
-    # Add batch dimension: (1, 96, 96, 1)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array = np.expand_dims(img_array, axis=-1)
-    
-    return img_array.astype(np.int8)
+        logger.error(f"❌ Detection error: {e}")
+        return "none", 0
 
 @app.route('/predict', methods=['POST'])
 def predict():
     """
     Endpoint: POST /predict
-    Body: raw image bytes (JPEG/PNG)
-    Returns: {"shape": "left"} or {"shape": "right"} or {"shape": "none"}
+    Body: raw image bytes (JPEG)
+    Returns: {
+        "shape": "circle" | "square" | "none",
+        "confidence": 0-100
+    }
     """
     try:
-        # Check if image data exists
+        # Validate input
         if not request.data:
+            logger.warning("No image data received")
             return jsonify({"error": "No image data received"}), 400
         
-        logger.info(f"📸 Received image: {len(request.data)} bytes")
+        logger.info(f"📥 Received {len(request.data)} bytes")
         
-        # Preprocess image
-        input_data = preprocess_image(request.data)
+        # Detect shape
+        shape, confidence = detect_shape_opencv(request.data)
         
-        # Run inference
-        interpreter.set_tensor(input_details[0]['index'], input_data)
-        interpreter.invoke()
+        logger.info(f"✅ Detection result: shape={shape}, confidence={confidence}")
         
-        # Get output
-        output_data = interpreter.get_tensor(output_details[0]['index'])
+        response = {
+            "shape": shape,
+            "confidence": confidence
+        }
         
-        # output_data shape: (1, 2) for [Left, Right]
-        scores = output_data[0]
-        left_score = int(scores[0])
-        right_score = int(scores[1])
-        
-        logger.info(f"   Scores: Left={left_score}, Right={right_score}")
-        
-        # Determine result (higher score wins)
-        if left_score > right_score:
-            result = "left"
-            confidence = left_score
-        else:
-            result = "right"
-            confidence = right_score
-        
-        # Threshold: if confidence too low, return "none"
-        CONFIDENCE_THRESHOLD = 100  # Adjust based on your model
-        if confidence < CONFIDENCE_THRESHOLD:
-            logger.warning(f"⚠️  Low confidence: {confidence} < {CONFIDENCE_THRESHOLD}")
-            result = "none"
-        
-        logger.info(f"✅ Result: {result} (confidence: {confidence})")
-        
-        return jsonify({
-            "shape": result,
-            "confidence": int(confidence),
-            "scores": {
-                "left": int(left_score),
-                "right": int(right_score)
-            }
-        })
+        logger.info(f"Response: {response}")
+        return jsonify(response)
         
     except Exception as e:
-        logger.error(f"❌ Prediction error: {e}")
+        logger.error(f"❌ Prediction error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
@@ -126,18 +143,24 @@ def health():
     """Health check endpoint"""
     return jsonify({
         "status": "ok",
-        "model_loaded": interpreter is not None
+        "backend": "OpenCV",
+        "version": "2.0"
     })
 
 if __name__ == '__main__':
-    # Load model on startup
-    load_model()
+    logger.info("=" * 60)
+    logger.info("🚀 Starting OpenCV Shape Detection Server v2.0")
+    logger.info("=" * 60)
+    logger.info("Features:")
+    logger.info("  ✓ Circle detection (HoughCircles)")
+    logger.info("  ✓ Square detection (Contour analysis)")
+    logger.info("  ✓ Black shapes on white background")
+    logger.info("=" * 60)
+    logger.info("API Endpoint: http://0.0.0.0:5000/predict (POST)")
+    logger.info("Health Check: http://0.0.0.0:5000/health (GET)")
+    logger.info("=" * 60)
+    logger.info("Waiting for requests from ESP32-CAM...")
+    logger.info("=" * 60)
     
-    # Run server on all interfaces, port 5000
-    # PC/Laptop connects to VIPER WiFi (192.168.4.x)
-    # ESP32-CAM will POST to http://192.168.4.x:5000/predict
-    logger.info("🚀 Starting TensorFlow server...")
-    logger.info("   Connect your PC to WiFi: VIPER")
-    logger.info("   ESP32-CAM will POST to: http://192.168.4.x:5000/predict")
-    
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Run server
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)

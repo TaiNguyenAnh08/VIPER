@@ -1,4 +1,4 @@
-# QUICK START - 5 PHÚT BẬT ROBOT
+# QUICK START - 5 PHÚT BẬT ROBOT (OpenCV)
 
 ## 🚀 CÁC BƯỚC NHANH:
 
@@ -13,7 +13,7 @@
 ### 2️⃣ Update ESP32-CAM IP (30 giây)
 ```
 Mở: CameraWebServer/CameraWebServer.ino
-Dòng 30: #define TF_SERVER_IP "192.168.4.3" ← IP PC của bạn
+Dòng 33: #define TF_SERVER_IP "192.168.4.3" ← IP PC của bạn
 ```
 
 ### 3️⃣ Upload Code (2 phút)
@@ -26,28 +26,28 @@ Arduino IDE:
 ### 4️⃣ Chạy Python Server (30 giây)
 ```powershell
 cd d:\cuoikynhung\python_server
+pip install -r requirements.txt  # Only first time
 python tf_server.py
 ```
 
 ### 5️⃣ Test (1 phút)
 ```
 1. Web UI: http://192.168.4.1 → bật LINE FOLLOWING
-2. Đặt vật cản trước xe ~20cm
-3. Xe sẽ dừng → chụp ảnh → rẽ
+2. Đặt vật cản (hình tròn hoặc vuông đen trên trắng) trước xe ~20cm
+3. Xe sẽ dừng → server detect shape → rẽ tránh
 ```
 
 ---
 
-## ⚠️ LƯU Ý:
+## ⚠️ QUAN TRỌNG:
 
-**Model hiện tại là DUMMY** → kết quả random!
+✅ **Không cần training!** OpenCV tự detect hình tròn & vuông.
 
-**Train model thật:**
-1. Vào: https://teachablemachine.withgoogle.com/train/image
-2. Upload ảnh hình tròn (left) và hình vuông (right)
-3. Train → Export TFLite int8
-4. Copy file `.tflite` vào `python_server/shape_model.tflite`
-5. Restart server
+**Yêu cầu vật cản:**
+- ✓ Hình tròn hoặc vuông
+- ✓ Màu đen
+- ✓ Nền trắng
+- ✓ Size: 4-8cm (lớp)
 
 ---
 
@@ -56,7 +56,7 @@ python tf_server.py
 ### Server OK?
 ```powershell
 curl http://localhost:5000/health
-# → {"status":"ok","model_loaded":true}
+# → {"status":"ok","backend":"OpenCV","version":"2.0"}
 ```
 
 ### ESP32-CAM OK?
@@ -64,7 +64,7 @@ curl http://localhost:5000/health
 Serial Monitor ESP32-CAM:
 - "WiFi connected to VIPER!"
 - "API ready at /detect_shape"
-- "TF Server: http://192.168.4.x:5000"
+- "Server: http://192.168.4.x:5000"
 ```
 
 ### VIPER OK?
@@ -74,6 +74,15 @@ Serial Monitor VIPER:
 - "WiFi AP started: VIPER"
 ```
 
+### Web UI OK?
+```
+http://192.168.4.1
+- ✓ Camera livestream hiển thị
+- ✓ "LINE FOLLOWING" button bật/tắt
+- ✓ Motor control buttons hoạt động
+```
+
 ---
 
 **ĐỌC ĐẦY ĐỦ**: [SETUP_COMPLETE.md](SETUP_COMPLETE.md)
+**HƯỚNG DẪN CHI TIẾT**: [python_server/README.md](python_server/README.md)

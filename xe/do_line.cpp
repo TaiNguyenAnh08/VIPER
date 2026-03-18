@@ -460,34 +460,113 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
   long sL, sR; noInterrupts(); sL = encL_total; sR = encR_total; interrupts();
   
   unsigned long start_time = millis();
-  const unsigned long TIMEOUT_MS = 5000; // 5 giây timeout để tránh xe đi mãi
+  const unsigned long TIMEOUT_MS = 8000; // 8 giây timeout
   
+  // Giai đoạn 1: Tiến thẳng check sensor liên tục
+  Serial.println("[SEARCH] Phase 1: Forward straight search");
   motorWriteLR_signed(+pwmAbs, +pwmAbs);
+  
   while (true){
     if (!g_line_enabled){ motorsStop(); return false; }
     
-    // Timeout safety: nếu đi quá 5 giây mà chưa tìm được line → dừng
+    // Timeout safety
     if (millis() - start_time > TIMEOUT_MS) {
-      Serial.println("[WARN] move_forward_distance_until_line TIMEOUT!");
+      Serial.println("[SEARCH] TIMEOUT!");
       motorsStop();
       return false;
     }
     
     long cL, cR; noInterrupts(); cL = encL_total; cR = encR_total; interrupts();
     
-    // Check bất kỳ sensor nào thấy line
-    if (onLine(L2_SENSOR)||onLine(L1_SENSOR)||onLine(M_SENSOR)||onLine(R1_SENSOR)||onLine(R2_SENSOR)){
-      motorsStop(); return true;
+    // ========== SENSOR CHECK ==========
+    bool L2 = onLine(L2_SENSOR);
+    bool L1 = onLine(L1_SENSOR);
+    bool M  = onLine(M_SENSOR);
+    bool R1 = onLine(R1_SENSOR);
+    bool R2 = onLine(R2_SENSOR);
+    
+    // Nếu bất kỳ sensor thấy line → FOUND!
+    if (L2 || L1 || M || R1 || R2){
+      Serial.println("[SEARCH] ✓ LINE FOUND!");
+      motorsStop(); 
+      return true;
     }
     
+    // ========== DISTANCE CHECK ==========
     bool left_done  = (labs(cL - sL) >= target);
     bool right_done = (labs(cR - sR) >= target);
-    if (left_done && right_done) break;
     
-    if (left_done && !right_done)      motorWriteLR_signed(0, +pwmAbs);
-    else if (!left_done && right_done) motorWriteLR_signed(+pwmAbs, 0);
+    // Chỉ tiến thẳng trong giai đoạn 1 (target distance)
+    if (left_done && right_done) {
+      Serial.println("[SEARCH] Phase 1 done, entering Phase 2");
+      break;  // Chuyển sang giai đoạn 2
+    }
+    
     delay(1);
   }
+  
+  // ========== GIAI ĐOẠN 2: Search mở rộng ==========
+  // Nếu chưa tìm được line sau 40cm, quay theo last_seen direction
+  Serial.println("[SEARCH] Phase 2: Expanding search with turns");
+  
+  const int EXPAND_STEPS = 3;  // 3 vòng quay mở rộng
+  int step_count = 0;
+  
+  while (step_count < EXPAND_STEPS && (millis() - start_time < TIMEOUT_MS)) {
+    if (!g_line_enabled){ motorsStop(); return false; }
+    
+    // Quay theo last_seen direction + tiến
+    if (last_seen == LEFT) {
+      // Line ở bên TRÁI → quay TRÁI nhiều hơn
+      Serial.printf("[SEARCH] Step %d: Turning LEFT (last_seen=LEFT), searching...\n", step_count+1);
+      spin_left_deg(20.0 + step_count*10, 100);  // 20°, 30°, 40°
+      motorsStop(); delay(200);
+    } else if (last_seen == RIGHT) {
+      // Line ở bên PHẢI → quay PHẢI nhiều hơn
+      Serial.printf("[SEARCH] Step %d: Turning RIGHT (last_seen=RIGHT), searching...\n", step_count+1);
+      spin_right_deg(20.0 + step_count*10, 100);
+      motorsStop(); delay(200);
+    } else {
+      // Không nhớ hướng → quay xoay chéo (Z-pattern)
+      if (step_count % 2 == 0) {
+        Serial.printf("[SEARCH] Step %d: Turning LEFT (unknown direction, Z-pattern)\n", step_count+1);
+        spin_left_deg(15.0, 100);
+      } else {
+        Serial.printf("[SEARCH] Step %d: Turning RIGHT (unknown direction, Z-pattern)\n", step_count+1);
+        spin_right_deg(15.0, 100);
+      }
+      motorsStop(); delay(200);
+    }
+    
+    // Tiến dò line 30cm
+    motorWriteLR_signed(+pwmAbs, +pwmAbs);
+    unsigned long step_start = millis();
+    
+    while (millis() - step_start < 2000) {  // 2 giây tiến mỗi step
+      if (!g_line_enabled){ motorsStop(); return false; }
+      
+      // Check sensor
+      bool L2 = onLine(L2_SENSOR);
+      bool L1 = onLine(L1_SENSOR);
+      bool M  = onLine(M_SENSOR);
+      bool R1 = onLine(R1_SENSOR);
+      bool R2 = onLine(R2_SENSOR);
+      
+      if (L2 || L1 || M || R1 || R2){
+        Serial.println("[SEARCH] ✓ LINE FOUND in Phase 2!");
+        motorsStop(); 
+        return true;
+      }
+      
+      delay(1);
+    }
+    
+    motorsStop();
+    step_count++;
+  }
+  
+  // Hết timeout mà chưa tìm được
+  Serial.println("[SEARCH] ✗ LINE NOT FOUND - Timeout");
   motorsStop();
   return false;
 }
@@ -545,7 +624,7 @@ String detectColorFromCamera() {
   return "none";
 }
 
-// ================= DETECT SHAPE FROM CAMERA (TENSORFLOW) =================
+// ================= DETECT SHAPE FROM CAMERA (OPENCV) =================
 // Cache để tránh HTTP calls liên tục
 unsigned long lastShapeDetectTime = 0;
 String cachedObstacleShape = "none";
@@ -598,11 +677,10 @@ String detectShapeFromCamera() {
   return "none";
 }
 
-// ================= SIMPLE AVOIDANCE: Avoid RIGHT (Circle/Left shape) =================
-// Pattern: rẽ TRÁI 60° → 20cm → phải 60° → 20cm → phải 65° → tìm line
-// SWAP logic vì motor LEFT/RIGHT trong code bị ngược với thực tế
-// Dùng khi TensorFlow detect HÌNH TRÒN (circle) → rẽ TRÁI (thực tế)
-// ================= OBSTACLE AVOIDANCE RIGHT (Circle → Turn LEFT) =================
+// ================= OBSTACLE AVOIDANCE RIGHT (Square → Turn LEFT) =================
+// Pattern: rẽ TRÁI 60° → 25cm → phải 60° → 20cm → tìm line
+// NOTE: avoidObstacleRight = turn LEFT (counter-intuitive naming but correct)
+// ================= OBSTACLE AVOIDANCE RIGHT (Square → Turn LEFT) =================
 // TỐI ƯU: Quay trái 60° → tiến 25cm → quay phải 75° → tiến 20cm → quay phải 75° (XE CHÉO)
 // LÚC TẮT LINE FOLLOWING: g_line_enabled = false → hàm này sẽ return ngay
 void avoidObstacleRight(){
@@ -623,9 +701,9 @@ void avoidObstacleRight(){
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
-  // [3] Quay PHẢI 75° (tăng từ 60° để tạo góc chéo)
-  Serial.println("  [3] Turn RIGHT 75° (steep angle)");
-  spin_right_deg(75.0, TURN_PWM);
+  // [3] Quay PHẢI 60° (bằng quay trái step 1) → tổng góc = 0°, song song line!
+  Serial.println("  [3] Turn RIGHT 60° (back parallel to line)");
+  spin_right_deg(60.0, TURN_PWM);
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
@@ -635,30 +713,31 @@ void avoidObstacleRight(){
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
-  // [5] Quay PHẢI 75° (tăng từ 50°) → XE ĐI CHÉO QUA LINE!
-  Serial.println("  [5] Turn RIGHT 75° (DIAGONAL APPROACH)");
-  spin_right_deg(75.0, TURN_PWM);
+  // [5] Quay PHẢI 45° để đặt xe chéo so với line
+  Serial.println("  [5] Turn RIGHT 45° (diagonal to line for better search)");
+  spin_right_deg(45.0, TURN_PWM);
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
-  // [6] Tiến dò line (tối đa 60cm) - xe đi chéo sẽ cắt ngang line
-  Serial.println("  [6] Search for line (60cm max, diagonal crossing)");
-  bool seen = move_forward_distance_until_line(0.60, FWD_PWM);
+  // [6] Tiến dò line (tối đa 40cm)
+  Serial.println("  [6] Search for line (40cm max)");
+  bool seen = move_forward_distance_until_line(0.40, FWD_PWM);
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
   
-  // [7] Nếu chưa thấy line → quay TRÁI 40° để điều chỉnh
+  // [7] Nếu chưa thấy line → quay PHẢI 30° để điều chỉnh
   if (!seen) {
-    Serial.println("  [7] Line not found - turn LEFT 40° to adjust");
-    spin_left_deg(40.0, TURN_PWM);
+    Serial.println("  [7] Line not found - turn RIGHT 30° to adjust");
+    spin_right_deg(30.0, TURN_PWM);
     motorsStop(); delay(300);
   }
 
   Serial.println(">>> RIGHT AVOIDANCE DONE <<<\n");
 }
 
-// ================= OBSTACLE AVOIDANCE LEFT (Square → Turn RIGHT) =================
-// TỐI ƯU: Quay phải 60° → tiến 25cm → quay trái 75° → tiến 20cm → quay trái 75° (XE CHÉO)
+// ================= OBSTACLE AVOIDANCE LEFT (Circle → Turn RIGHT) =================
+// TỐI ƯU: Quay phải 60° → tiến 25cm → quay trái 60° → tiến 20cm → tìm line
+// NOTE: avoidObstacleLeft = turn RIGHT (counter-intuitive naming but correct)
 // LÚC TẮT LINE FOLLOWING: g_line_enabled = false → hàm này sẽ return ngay
 void avoidObstacleLeft(){
   const int TURN_PWM = 120;
@@ -678,9 +757,9 @@ void avoidObstacleLeft(){
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
-  // [3] Quay TRÁI 75° (tăng từ 60° để tạo góc chéo)
-  Serial.println("  [3] Turn LEFT 75° (steep angle)");
-  spin_left_deg(75.0, TURN_PWM);
+  // [3] Quay TRÁI 60° (bằng quay phải step 1) → tổng góc = 0°, song song line!
+  Serial.println("  [3] Turn LEFT 60° (back parallel to line)");
+  spin_left_deg(60.0, TURN_PWM);
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
@@ -690,22 +769,22 @@ void avoidObstacleLeft(){
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
-  // [5] Quay TRÁI 75° (tăng từ 50°) → XE ĐI CHÉO QUA LINE!
-  Serial.println("  [5] Turn LEFT 75° (DIAGONAL APPROACH)");
-  spin_left_deg(75.0, TURN_PWM);
+  // [5] Quay TRÁI 45° để đặt xe chéo so với line
+  Serial.println("  [5] Turn LEFT 45° (diagonal to line for better search)");
+  spin_left_deg(45.0, TURN_PWM);
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
 
-  // [6] Tiến dò line (tối đa 60cm) - xe đi chéo sẽ cắt ngang line
-  Serial.println("  [6] Search for line (60cm max, diagonal crossing)");
-  bool seen = move_forward_distance_until_line(0.60, FWD_PWM);
+  // [6] Tiến dò line (tối đa 40cm)
+  Serial.println("  [6] Search for line (40cm max)");
+  bool seen = move_forward_distance_until_line(0.40, FWD_PWM);
   motorsStop(); delay(300);
   if (!g_line_enabled) return;
   
-  // [7] Nếu chưa thấy line → quay PHẢI 40° để điều chỉnh
+  // [7] Nếu chưa thấy line → quay TRÁI 30° để điều chỉnh
   if (!seen) {
-    Serial.println("  [7] Line not found - turn RIGHT 40° to adjust");
-    spin_right_deg(40.0, TURN_PWM);
+    Serial.println("  [7] Line not found - turn LEFT 30° to adjust");
+    spin_left_deg(30.0, TURN_PWM);
     motorsStop(); delay(300);
   }
 
@@ -946,24 +1025,26 @@ void do_line_loop() {
       Serial.println(">>> Waiting 1200ms for shape detection...");
       delay(1200);
 
-      // ========== TensorFlow Shape Detection ==========
+      // ========== OpenCV Shape Detection ==========
       String detectedShape = detectShapeFromCamera();
       last_detected_color  = detectedShape;  // Reuse variable for compatibility
       Serial.printf(">>> Shape detected: %s\n", detectedShape.c_str());
 
-      if (detectedShape == "left") {
-        // HÌNH TRÒN → rẽ TRÁI
-        obstacle_last_action = "circle_left";
-        avoidObstacleRight();  // Code RIGHT = thực tế LEFT
-      } else if (detectedShape == "right") {
-        // HÌNH VUÔNG → rẽ PHẢI
-        obstacle_last_action = "square_right";
-        avoidObstacleLeft();   // Code LEFT = thực tế RIGHT
+      if (detectedShape == "circle") {
+        // HÌNH TRÒN → rẽ PHẢI
+        obstacle_last_action = "circle_right";
+        avoidObstacleLeft();   // avoidObstacleLeft = turn RIGHT in reality
+        Serial.println("  → Detected CIRCLE: Turn RIGHT");
+      } else if (detectedShape == "square") {
+        // HÌNH VUÔNG → rẽ TRÁI
+        obstacle_last_action = "square_left";
+        avoidObstacleRight();  // avoidObstacleRight = turn LEFT in reality
+        Serial.println("  → Detected SQUARE: Turn LEFT");
       } else {
         // KHÔNG NHẬN DIỆN → rẽ TRÁI mặc định
-        Serial.println(">>> Shape not detected - default LEFT");
+        Serial.println(">>> Shape not detected - default LEFT (SQUARE)");
         obstacle_last_action = "unknown_left";
-        avoidObstacleRight();  // Code RIGHT = thực tế LEFT
+        avoidObstacleRight();  // Default = turn LEFT
       }
 
       // Reset về trạng thái line-follow bình thường

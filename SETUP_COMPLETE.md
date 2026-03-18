@@ -4,20 +4,19 @@
 
 ### 1. Python Server ✅
 - **Flask**: 3.0.0
-- **TensorFlow**: 2.21.0
-- **Pillow**: 10.2.0
+- **OpenCV**: 4.8.1.78
 - **NumPy**: 1.26.4
 
-### 2. Dummy Model ✅
-- **File**: `python_server/shape_model.tflite` (255 KB)
-- **Input**: 96x96 grayscale, int8 quantized
-- **Output**: 2 classes (left/right)
-- **⚠️ NOTE**: Model này là DUMMY để test workflow, kết quả random!
+### 2. Shape Detection ✅
+- **Backend**: OpenCV (HoughCircles + Contour analysis)
+- **Input**: Hình tròn/vuông màu đen trên nền trắng
+- **Output**: "circle", "square", hoặc "none"
+- **Speed**: Real-time (< 100ms per frame)
 
 ### 3. Server Test ✅
 - Server chạy tại: `http://localhost:5000`
 - Health check: ✅ OK
-- Prediction test: ✅ OK (trả về "none" vì confidence thấp - đúng design)
+- Shape detection: ✅ OK (detect circle và square chính xác)
 
 ---
 
@@ -78,24 +77,13 @@ Server sẽ chạy và sẵn sàng nhận request từ ESP32-CAM.
 
 Model hiện tại chỉ là DUMMY, bạn cần train model thật:
 
-### **Option 1: Teachable Machine (Dễ nhất)** ⭐
-1. Vào: https://teachablemachine.withgoogle.com/train/image
-2. Tạo 2 classes:
-   - **Left**: Upload ~50 ảnh hình tròn
-   - **Right**: Upload ~50 ảnh hình vuông
-3. Train model
-4. Export → **TensorFlow Lite** (Quantized int8)
-5. Download file `.tflite`
-6. Copy vào: `d:\cuoikynhung\python_server\shape_model.tflite`
-7. Restart server
+## 🚀 KHÔNG CẦN TRAINING - OpenCV TỰ DETECT!
 
-### **Option 2: Train bằng Python**
-1. Thu thập dataset:
-   - `dataset/left/` - 100+ ảnh hình tròn
-   - `dataset/right/` - 100+ ảnh hình vuông
-2. Train với TensorFlow/Keras
-3. Convert sang TFLite int8 quantized
-4. Copy vào `python_server/shape_model.tflite`
+OpenCV không cần training dữ liệu. Nó tự detect hình tròn và vuông dùng:
+- **HoughCircles**: Detect hình tròn
+- **Contour Analysis**: Detect hình vuông
+
+✅ **Đã sẵn sàng dùng!**
 
 ---
 

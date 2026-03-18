@@ -1,6 +1,6 @@
-# TensorFlow Shape Detection Server
+# OpenCV Shape Detection Server
 
-Python server nhận ảnh từ ESP32-CAM và trả về kết quả nhận dạng hình dạng (Left/Right).
+Python server nhận ảnh từ ESP32-CAM và trả về kết quả nhận dạng hình dạng (circle/square) dùng OpenCV.
 
 ## Cài đặt
 
@@ -10,22 +10,19 @@ cd python_server
 pip install -r requirements.txt
 ```
 
-### 2. Copy model TFLite
-Copy file `shape_model.tflite` (model bạn train) vào thư mục `python_server/`
-
-### 3. Kết nối WiFi VIPER
+### 2. Kết nối WiFi VIPER
 Trên PC/Laptop, kết nối WiFi: **VIPER** (password: theo xe.ino)
 
 Sau khi kết nối, PC sẽ có IP dạng `192.168.4.x` (thường là 192.168.4.3 hoặc 192.168.4.4)
 
-### 4. Chạy server
+### 3. Chạy server
 ```bash
 python tf_server.py
 ```
 
 Server sẽ chạy trên `http://0.0.0.0:5000`
 
-### 5. Kiểm tra IP của PC
+### 4. Kiểm tra IP của PC
 Mở terminal/cmd và chạy:
 ```bash
 ipconfig  # Windows

@@ -91,7 +91,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="card">
-    <h2>🤖 TensorFlow Shape Detection</h2>
+    <h2>🤖 OpenCV Shape Detection</h2>
     <div style="display:flex;gap:12px;align-items:center;padding:12px;background:#0b1220;border:1px solid #1f2937;border-radius:12px;">
       <div style="flex:1">
         <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">Detected Shape:</div>
@@ -104,9 +104,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div id="colorIndicator" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:32px;background:#1f2937;border:2px solid #374151;border-radius:12px;">🔲</div>
     </div>
     <div style="margin-top:10px;font-size:12px;color:var(--muted);text-align:center;padding:8px;background:#0b1220;border:1px solid #1f2937;border-radius:8px;">
-      <div style="margin-bottom:4px;font-weight:600;color:#3b82f6;">📊 TensorFlow + Python Server</div>
-      <span style="color:#22c55e;">⚫</span> Circle (Left) → Rẽ TRÁI &nbsp;|&nbsp; 
-      <span style="color:#ef4444;">⬛</span> Square (Right) → Rẽ PHẢI
+      <div style="margin-bottom:4px;font-weight:600;color:#3b82f6;">📊 OpenCV + HoughCircles + Contour</div>
+      <span style="color:#22c55e;">🔵</span> Circle → Rẽ PHẢI &nbsp;|&nbsp; 
+      <span style="color:#ef4444;">⬜</span> Square → Rẽ TRÁI
     </div>
   </div>
 
@@ -283,7 +283,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   refreshSpeed();
   setInterval(refreshObstacleStatus, 500); // Cập nhật mỗi 500ms
 
-  // TensorFlow Shape detection update
+  // OpenCV Shape detection update
   async function refreshColor(){
     try{
       const r = await fetch('/api/color');
@@ -295,11 +295,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       const shape = data.color;
       
       // Display shape name
-      if (shape === 'left') {
-        colorValue.textContent = 'Circle (Left) ⚫';
+      if (shape === 'circle') {
+        colorValue.textContent = '🔵 Circle (Turn RIGHT)';
         colorValue.style.color = '#22c55e';
-      } else if (shape === 'right') {
-        colorValue.textContent = 'Square (Right) ⬛';
+      } else if (shape === 'square') {
+        colorValue.textContent = '⬜ Square (Turn LEFT)';
         colorValue.style.color = '#ef4444';
       } else {
         colorValue.textContent = shape;
