@@ -246,15 +246,15 @@ const char index_html[] PROGMEM = R"rawliteral(
   // Đã bỏ hiển thị OBSTACLE DETECTION STATUS nên không cần poll /api/obstacle_status nữa
 
   // OpenCV Shape detection update
-  async function refreshColor(){
+  async function refreshShape(){
     try{
-      const r = await fetch('/api/color');
+      const r = await fetch('/api/shape');
       const data = await r.json();
       const colorValue = document.getElementById('colorValue');
       const colorAge = document.getElementById('colorAge');
       const colorIndicator = document.getElementById('colorIndicator');
-      
-      const shape = data.color;
+
+      const shape = data.shape;
       
       // Display shape name
       if (shape === 'circle') {
@@ -279,12 +279,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
       
       // Update shape indicator
-      if (shape === 'left') {
+      if (shape === 'circle') {
         colorIndicator.textContent = '⚫';
         colorIndicator.style.background = 'linear-gradient(135deg, #34d399, #22c55e)';
         colorIndicator.style.borderColor = '#22c55e';
         colorIndicator.style.fontSize = '36px';
-      } else if (shape === 'right') {
+      } else if (shape === 'square') {
         colorIndicator.textContent = '⬛';
         colorIndicator.style.background = 'linear-gradient(135deg, #fb7185, #ef4444)';
         colorIndicator.style.borderColor = '#ef4444';
@@ -298,8 +298,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     }catch(e){}
   }
   
-  refreshColor();
-  setInterval(refreshColor, 1000);
+  refreshShape();
+  setInterval(refreshShape, 1000);
 </script>
 </body>
 </html>

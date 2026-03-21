@@ -49,9 +49,9 @@ volatile UIMode currentMode = MODE_MANUAL;
 static bool lineInited = false;   // để chỉ gọi do_line_setup() một lần
 bool line_mode = false;
 
-// ================= Color Detection =================
-String lastDetectedColor = "none";
-unsigned long lastColorUpdate = 0;
+// ================= Shape Detection =================
+String lastDetectedShape = "none";
+unsigned long lastShapeUpdate = 0;
 
 // ================= Motion state =================
 enum Motion { STOPPED, FWD, BWD, LEFT_TURN, RIGHT_TURN, FWD_LEFT, FWD_RIGHT, BACK_LEFT, BACK_RIGHT };
@@ -149,33 +149,9 @@ void setup() {
     server.send(200,"text/plain", s);
   });
 
-  // Color API endpoint
-  server.on("/api/color", HTTP_POST, [](){
-    if (server.hasArg("plain")) {
-      String body = server.arg("plain");
-      
-      // Simple JSON parsing
-      if (body.indexOf("\"red\"") > 0) {
-        lastDetectedColor = "red";
-        Serial.println("[COLOR] Detected: RED");
-      } else if (body.indexOf("\"green\"") > 0) {
-        lastDetectedColor = "green";
-        Serial.println("[COLOR] Detected: GREEN");
-      } else if (body.indexOf("\"yellow\"") > 0) {
-        lastDetectedColor = "yellow";
-        Serial.println("[COLOR] Detected: YELLOW");
-      } else {
-        lastDetectedColor = "none";
-      }
-      
-      lastColorUpdate = millis();
-    }
-    server.send(200, "text/plain", "OK");
-  });
-
-  // Get current detected color
-  server.on("/api/color", HTTP_GET, [](){
-    String json = "{\"color\":\"" + lastDetectedColor + "\",\"age\":" + String(millis() - lastColorUpdate) + "}";
+  // Get current detected shape
+  server.on("/api/shape", HTTP_GET, [](){
+    String json = "{\"shape\":\"" + lastDetectedShape + "\",\"age\":" + String(millis() - lastShapeUpdate) + "}";
     server.send(200, "application/json", json);
   });
 

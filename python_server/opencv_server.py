@@ -1,7 +1,7 @@
 """
 OpenCV Shape Detection Server for VIPER Robot
 Detects circles (black on white) and squares using image processing
-Replaces TensorFlow with OpenCV for faster, simpler detection
+Uses OpenCV for fast, lightweight shape detection without ML training
 """
 
 from flask import Flask, request, jsonify

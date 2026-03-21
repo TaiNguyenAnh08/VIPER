@@ -1,5 +1,5 @@
 """
-Test script for TensorFlow server
+Test script for OpenCV shape detection server
 Usage: python test_server.py <image_path>
 """
 
@@ -10,7 +10,7 @@ import io
 
 def test_server(image_path, server_url="http://localhost:5000/predict"):
     """
-    Test the TensorFlow server with a test image
+    Test the OpenCV shape detection server with a test image
     """
     print(f"📸 Testing server with: {image_path}")
     print(f"🌐 Server URL: {server_url}")
@@ -47,7 +47,6 @@ def test_server(image_path, server_url="http://localhost:5000/predict"):
             print("\n✅ SUCCESS!")
             print(f"   Shape: {result['shape']}")
             print(f"   Confidence: {result['confidence']}")
-            print(f"   Scores: Left={result['scores']['left']}, Right={result['scores']['right']}")
         else:
             print(f"\n❌ HTTP Error: {response.status_code}")
             print(f"   Response: {response.text}")
@@ -56,7 +55,7 @@ def test_server(image_path, server_url="http://localhost:5000/predict"):
         print(f"❌ File not found: {image_path}")
     except requests.exceptions.ConnectionError:
         print("❌ Cannot connect to server. Is it running?")
-        print("   Run: python tf_server.py")
+        print("   Run: python opencv_server.py")
     except Exception as e:
         print(f"❌ Error: {e}")
 
@@ -71,7 +70,7 @@ def test_health(server_url="http://localhost:5000/health"):
             result = response.json()
             print(f"✅ Server is running")
             print(f"   Status: {result['status']}")
-            print(f"   Model loaded: {result['model_loaded']}")
+            print(f"   Backend: {result['backend']}")
         else:
             print(f"❌ HTTP Error: {response.status_code}")
     except requests.exceptions.ConnectionError:
@@ -81,7 +80,7 @@ def test_health(server_url="http://localhost:5000/health"):
 
 if __name__ == '__main__':
     print("=" * 50)
-    print("TensorFlow Server Test Script")
+    print("OpenCV Shape Detection Server Test Script")
     print("=" * 50)
     
     # Test health first

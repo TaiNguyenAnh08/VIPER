@@ -4,7 +4,7 @@
 #include "do_line.h"
 
 // ================= External from xe.ino =================
-extern String lastDetectedColor;
+extern String lastDetectedShape;
 
 /* ================= ESP32 30P + L298N + analogWrite =================
    Mapping:
@@ -80,7 +80,7 @@ void IRAM_ATTR echo_isr() {
 }
 
 // ================= Màu vật cản detected =================
-String last_detected_color = "none";         // Màu vật cản phát hiện gần nhất
+String last_detected_shape = "none";         // Màu vật cản phát hiện gần nhất
 float obstacle_last_distance = 0.0f;         // Khoảng cách vật cản gần nhất (cm)
 String obstacle_last_action = "none";        // Hành động: red→right, green→left, none→default
 unsigned long obstacle_last_time = 0;        // Thời điểm phát hiện vật cản
@@ -571,59 +571,6 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
   return false;
 }
 
-// ================= DETECT COLOR FROM CAMERA (ON-DEMAND) =================
-// Cache để tránh HTTP calls liên tục
-unsigned long lastColorDetectTime = 0;
-String cachedObstacleColor = "none";
-const unsigned long COLOR_CACHE_DURATION = 3000; // Cache 3 giây
-
-String detectColorFromCamera() {
-  // Nếu vừa detect trong 3 giây qua → dùng cache
-  if (millis() - lastColorDetectTime < COLOR_CACHE_DURATION && cachedObstacleColor != "none") {
-    Serial.printf("[CAM] Using cached color: %s (age: %lu ms)\n", 
-                  cachedObstacleColor.c_str(), 
-                  millis() - lastColorDetectTime);
-    return cachedObstacleColor;
-  }
-  
-  // ================= WiFi HTTP Communication =================
-  HTTPClient http;
-  
-  Serial.println("[CAM] Requesting color detection from camera...");
-  http.begin("http://192.168.4.3/detect_color");
-  http.setTimeout(2500); // Timeout 2.5s (đủ cho camera voting 3 frame + WiFi)
-  
-  int httpCode = http.GET();
-  
-  if (httpCode == HTTP_CODE_OK) {
-    String payload = http.getString();
-    Serial.printf("[CAM] Response: %s\n", payload.c_str());
-    
-    // Parse JSON: {"color":"red"}
-    StaticJsonDocument<128> doc;
-    DeserializationError error = deserializeJson(doc, payload);
-    
-    if (!error) {
-      String color = doc["color"].as<String>();
-      Serial.printf("[CAM] Detected color: %s\n", color.c_str());
-      
-      // Cache kết quả
-      cachedObstacleColor = color;
-      lastColorDetectTime = millis();
-      
-      http.end();
-      return color;
-    } else {
-      Serial.println("[CAM] JSON parse error");
-    }
-  } else {
-    Serial.printf("[CAM] HTTP error: %d\n", httpCode);
-  }
-  
-  http.end();
-  return "none";
-}
-
 // ================= DETECT SHAPE FROM CAMERA (OPENCV) =================
 // Cache để tránh HTTP calls liên tục
 unsigned long lastShapeDetectTime = 0;
@@ -633,7 +580,7 @@ const unsigned long SHAPE_CACHE_DURATION = 3000; // Cache 3 giây
 String detectShapeFromCamera() {
   // Nếu vừa detect trong 3 giây qua → dùng cache
   if (millis() - lastShapeDetectTime < SHAPE_CACHE_DURATION && cachedObstacleShape != "none") {
-    Serial.printf("[TF] Using cached shape: %s (age: %lu ms)\n", 
+    Serial.printf("[CV] Using cached shape: %s (age: %lu ms)\n", 
                   cachedObstacleShape.c_str(), 
                   millis() - lastShapeDetectTime);
     return cachedObstacleShape;
@@ -642,7 +589,7 @@ String detectShapeFromCamera() {
   // ================= WiFi HTTP Communication =================
   HTTPClient http;
   
-  Serial.println("[TF] Requesting shape detection from camera...");
+  Serial.println("[CV] Requesting shape detection from camera...");
   http.begin("http://192.168.4.3/detect_shape");
   http.setTimeout(8000); // Timeout 8s (đủ cho camera + Python server inference)
   
@@ -650,7 +597,7 @@ String detectShapeFromCamera() {
   
   if (httpCode == HTTP_CODE_OK) {
     String payload = http.getString();
-    Serial.printf("[TF] Response: %s\n", payload.c_str());
+    Serial.printf("[CV] Response: %s\n", payload.c_str());
     
     // Parse JSON: {"shape":"left"}
     StaticJsonDocument<256> doc;
@@ -658,7 +605,7 @@ String detectShapeFromCamera() {
     
     if (!error) {
       String shape = doc["shape"].as<String>();
-      Serial.printf("[TF] Detected shape: %s\n", shape.c_str());
+      Serial.printf("[CV] Detected shape: %s\n", shape.c_str());
       
       // Cache kết quả
       cachedObstacleShape = shape;
@@ -667,23 +614,20 @@ String detectShapeFromCamera() {
       http.end();
       return shape;
     } else {
-      Serial.println("[TF] JSON parse error");
+      Serial.println("[CV] JSON parse error");
     }
   } else {
-    Serial.printf("[TF] HTTP error: %d\n", httpCode);
+    Serial.printf("[CV] HTTP error: %d\n", httpCode);
   }
   
   http.end();
   return "none";
 }
 
-// ================= OBSTACLE AVOIDANCE RIGHT (Square → Turn LEFT) =================
-// Pattern: rẽ TRÁI 60° → 25cm → phải 60° → 20cm → tìm line
-// NOTE: avoidObstacleRight = turn LEFT (counter-intuitive naming but correct)
-// ================= OBSTACLE AVOIDANCE RIGHT (Square → Turn LEFT) =================
-// TỐI ƯU: Quay trái 60° → tiến 25cm → quay phải 75° → tiến 20cm → quay phải 75° (XE CHÉO)
+// ================= TRÁNH VẬT CẢN: RẼ TRÁI (Square) =================
+// Pattern: quay trái 60° → tiến 25cm → quay phải 60° → tiến 20cm → tìm line
 // LÚC TẮT LINE FOLLOWING: g_line_enabled = false → hàm này sẽ return ngay
-void avoidObstacleRight(){
+void avoidTurnLeft(){
   const int TURN_PWM = 120;
   const int FWD_PWM  = 130;
 
@@ -735,11 +679,10 @@ void avoidObstacleRight(){
   Serial.println(">>> RIGHT AVOIDANCE DONE <<<\n");
 }
 
-// ================= OBSTACLE AVOIDANCE LEFT (Circle → Turn RIGHT) =================
-// TỐI ƯU: Quay phải 60° → tiến 25cm → quay trái 60° → tiến 20cm → tìm line
-// NOTE: avoidObstacleLeft = turn RIGHT (counter-intuitive naming but correct)
+// ================= TRÁNH VẬT CẢN: RẼ PHẢI (Circle) =================
+// Pattern: quay phải 60° → tiến 25cm → quay trái 60° → tiến 20cm → tìm line
 // LÚC TẮT LINE FOLLOWING: g_line_enabled = false → hàm này sẽ return ngay
-void avoidObstacleLeft(){
+void avoidTurnRight(){
   const int TURN_PWM = 120;
   const int FWD_PWM  = 130;
 
@@ -822,7 +765,7 @@ void do_line_abort(){
   pwmR_prev = 0;
   
   // 7. Reset obstacle cache
-  last_detected_color = "none";
+  last_detected_shape = "none";
   obstacle_last_distance = 0.0f;
   obstacle_last_action = "none";
   
@@ -851,7 +794,7 @@ String getLineStatus() {
   json += "\"dist\":" + String(dist, 1) + ",";
   json += "\"recovery\":" + String(recovering ? 1 : 0) + ",";
   json += "\"seen\":" + String(seen_line_ever ? 1 : 0) + ",";
-  json += "\"color\":\"" + last_detected_color + "\"";
+  json += "\"color\":\"" + last_detected_shape + "\"";
   json += "}";
   
   return json;
@@ -861,7 +804,7 @@ String getLineStatus() {
 String getObstacleStatus() {
   String json = "{";
   json += "\"distance\":" + String(obstacle_last_distance, 1) + ",";
-  json += "\"color\":\"" + last_detected_color + "\",";
+  json += "\"color\":\"" + last_detected_shape + "\",";
   json += "\"action\":\"" + obstacle_last_action + "\",";
   json += "\"time\":" + String(obstacle_last_time);
   json += "}";
@@ -942,7 +885,7 @@ void do_line_setup() {
   pwmR_prev = 0;
   
   // Reset obstacle tracking
-  last_detected_color = "none";
+  last_detected_shape = "none";
   obstacle_last_distance = 0.0f;
   obstacle_last_action = "none";
   obstacle_last_time = 0;
@@ -1027,24 +970,25 @@ void do_line_loop() {
 
       // ========== OpenCV Shape Detection ==========
       String detectedShape = detectShapeFromCamera();
-      last_detected_color  = detectedShape;  // Reuse variable for compatibility
+      last_detected_shape  = detectedShape;
+      lastDetectedShape    = detectedShape;  // Cập nhật Web UI qua /api/shape
       Serial.printf(">>> Shape detected: %s\n", detectedShape.c_str());
 
       if (detectedShape == "circle") {
         // HÌNH TRÒN → rẽ PHẢI
         obstacle_last_action = "circle_right";
-        avoidObstacleLeft();   // avoidObstacleLeft = turn RIGHT in reality
+        avoidTurnRight();
         Serial.println("  → Detected CIRCLE: Turn RIGHT");
       } else if (detectedShape == "square") {
         // HÌNH VUÔNG → rẽ TRÁI
         obstacle_last_action = "square_left";
-        avoidObstacleRight();  // avoidObstacleRight = turn LEFT in reality
+        avoidTurnLeft();
         Serial.println("  → Detected SQUARE: Turn LEFT");
       } else {
         // KHÔNG NHẬN DIỆN → rẽ TRÁI mặc định
-        Serial.println(">>> Shape not detected - default LEFT (SQUARE)");
+        Serial.println(">>> Shape not detected - default LEFT");
         obstacle_last_action = "unknown_left";
-        avoidObstacleRight();  // Default = turn LEFT
+        avoidTurnLeft();
       }
 
       // Reset về trạng thái line-follow bình thường
