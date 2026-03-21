@@ -78,14 +78,16 @@ void setup() {
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.grab_mode = CAMERA_GRAB_LATEST;  // Luôn lấy frame mới nhất
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 15;  // 15 = balanced quality/speed (reduced from 12 for less lag)
+  // Tăng nén JPEG một chút để giảm dung lượng frame, giúp realtime mượt hơn
+  config.jpeg_quality = 20;  // 20: nhẹ hơn 15 nhưng vẫn đủ nét
   config.fb_count = 2;  // Double buffering cho speed
 
   // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
   //                      for larger pre-allocated frame buffer.
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
-      config.jpeg_quality = 15;  // 15 = faster encoding, reduced lag (was 10)
+      // Đồng bộ với cấu hình trên để đảm bảo kích thước frame ổn định
+      config.jpeg_quality = 20;
       config.fb_count = 2;
       config.grab_mode = CAMERA_GRAB_LATEST;
     } else {

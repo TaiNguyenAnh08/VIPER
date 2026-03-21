@@ -7,26 +7,31 @@ const char index_html[] PROGMEM = R"rawliteral(
 <title>VIPER Control</title>
 <style>
   :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--txt:#e5e7eb;--acc:#22c55e;--rot:#3b82f6;--stop:#ef4444;--amber:#f59e0b;}
-  *{box-sizing:border-box} html,body{min-height:100%}
-  body{margin:0;font-family:ui-sans-serif,system-ui,Arial;background:radial-gradient(1200px 800px at 50% -10%, #1f2937 0%, var(--bg) 60%);
-       color:var(--txt);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:8px;gap:12px;overflow-y:auto}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{font-family:ui-sans-serif,system-ui,Arial;background:radial-gradient(1200px 800px at 50% -10%, #1f2937 0%, var(--bg) 60%);
+      color:var(--txt);display:flex;flex-direction:column;}
   .card{width:min(520px,100%);background:linear-gradient(180deg,#0b1220 0%, var(--card) 100%);
         border:1px solid #1f2937;border-radius:16px;padding:18px 16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-  
-  /* VIDEO FULL WIDTH RESPONSIVE */
-  .cam-card{padding:8px;width:100%;max-width:100%;margin:0}
+
+  /* VIDEO PINNED AT TOP */
+  .cam-section{flex-shrink:0;padding:8px 8px 0;display:flex;justify-content:center;}
+  .cam-card{padding:8px;width:100%;max-width:520px;}
   .cam-container{position:relative;width:100%;padding-top:56.25%;background:#000;border-radius:8px;overflow:hidden}
-  .cam-container iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
+  .cam-container img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;border:0}
+
+  /* SCROLLABLE CONTENT BELOW VIDEO */
+  .scroll-section{flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:12px;padding:8px;}
   
   .cam-status{text-align:center;margin-top:8px;font-size:12px;color:var(--muted)}
   .cam-status.offline{color:var(--stop)}
   .cam-status.online{color:var(--acc)}
-  .obstacle-status{margin-top:10px;padding:10px;background:#0b1220;border:1px solid #1f2937;border-radius:8px;font-size:13px;line-height:1.5;min-height:60px}
+  /* Ẩn hoàn toàn block OBSTACLE DETECTION STATUS khỏi giao diện */
+  .obstacle-status{display:none}
   .obstacle-status .label{color:var(--muted);font-size:11px;margin-bottom:4px}
   .obstacle-status .value{font-weight:600}
   .obstacle-status .red{color:#ef4444}
   .obstacle-status .green{color:#22c55e}
-  .obstacle-status .yellow{color:#f59e0b}
   h1{margin:0 0 2px;font-size:22px}
   h2{margin:0 0 8px;font-size:16px;font-weight:600}
   .subtitle{margin:0 0 6px;font-size:11px;color:var(--muted);font-style:italic}
@@ -52,8 +57,9 @@ const char index_html[] PROGMEM = R"rawliteral(
   
   /* MOBILE OPTIMIZATION */
   @media (max-width: 768px) {
-    body{padding:4px;gap:8px}
+    .scroll-section{padding:4px;gap:8px}
     .card{padding:12px;border-radius:12px}
+    .cam-section{padding:4px 4px 0}
     .cam-card{padding:6px;border-radius:12px}
     .cam-container{border-radius:6px}
     h1{font-size:20px}
@@ -78,18 +84,17 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-  <div class="card cam-card">
-    <h2>VIPER CAM</h2>
-    <div class="cam-container">
-      <iframe id="camFrame" src="http://192.168.4.3:81/stream" allow="camera"></iframe>
-    </div>
-    <div id="camStatus" class="cam-status">Loading camera...</div>
-    <div id="obstacleStatus" class="obstacle-status">
-      <div class="label">OBSTACLE DETECTION STATUS</div>
-      <div class="value">Chờ phát hiện vật cản...</div>
+  <div class="cam-section">
+    <div class="card cam-card">
+      <h2>VIPER CAM</h2>
+      <div class="cam-container">
+        <img id="camImg" src="http://192.168.4.3:81/stream" alt="Camera stream" />
+      </div>
+      <div id="camStatus" class="cam-status">Loading camera...</div>
     </div>
   </div>
 
+  <div class="scroll-section">
   <div class="card">
     <h2>🤖 OpenCV Shape Detection</h2>
     <div style="display:flex;gap:12px;align-items:center;padding:12px;background:#0b1220;border:1px solid #1f2937;border-radius:12px;">
@@ -102,11 +107,6 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div id="colorAge" style="font-size:14px;">--</div>
       </div>
       <div id="colorIndicator" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:32px;background:#1f2937;border:2px solid #374151;border-radius:12px;">🔲</div>
-    </div>
-    <div style="margin-top:10px;font-size:12px;color:var(--muted);text-align:center;padding:8px;background:#0b1220;border:1px solid #1f2937;border-radius:8px;">
-      <div style="margin-bottom:4px;font-weight:600;color:#3b82f6;">📊 OpenCV + HoughCircles + Contour</div>
-      <span style="color:#22c55e;">🔵</span> Circle → Rẽ PHẢI &nbsp;|&nbsp; 
-      <span style="color:#ef4444;">⬜</span> Square → Rẽ TRÁI
     </div>
   </div>
 
@@ -144,6 +144,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       <button class="btn spd" data-path="/speed/rot/up">Rot +</button>
     </div>
   </div>
+
+  </div><!-- end scroll-section -->
 
   <div id="overlay" class="overlay"><div class="box">Line follow mode active. Manual control disabled.</div></div>
 
@@ -218,70 +220,30 @@ const char index_html[] PROGMEM = R"rawliteral(
     }), {passive:false});
   });
 
-  const camFrame = document.getElementById('camFrame');
+  const camImg = document.getElementById('camImg');
   const camStatus = document.getElementById('camStatus');
-  let camCheckInterval;
+  const CAM_URL = 'http://192.168.4.3:81/stream';
 
-  function checkCamera() {
-    fetch('http://192.168.4.3:81/stream', {method:'HEAD', mode:'no-cors'})
-      .then(()=> {
-        camStatus.textContent = 'Camera online';
-        camStatus.className = 'cam-status online';
-      })
-      .catch(()=> {
-        camStatus.textContent = 'Camera offline';
-        camStatus.className = 'cam-status offline';
-      });
+  function reloadStream() {
+    camImg.src = CAM_URL + '?t=' + Date.now();
+    camStatus.textContent = 'Connecting...';
+    camStatus.className = 'cam-status';
   }
 
-  camFrame.addEventListener('load', ()=> {
+  camImg.addEventListener('load', ()=> {
     camStatus.textContent = 'Livestream running';
     camStatus.className = 'cam-status online';
   });
 
-  camFrame.addEventListener('error', ()=> {
-    camStatus.textContent = 'Failed to load stream';
+  camImg.addEventListener('error', ()=> {
+    camStatus.textContent = 'Camera offline — retrying...';
     camStatus.className = 'cam-status offline';
+    setTimeout(reloadStream, 3000);
   });
-
-  checkCamera();
-  camCheckInterval = setInterval(checkCamera, 5000);
-
-  // Obstacle status update
-  async function refreshObstacleStatus(){
-    try{
-      const r = await fetch('/api/obstacle_status');
-      const data = await r.json();
-      const obstacleStatusDiv = document.getElementById('obstacleStatus');
-      
-      if (data.time === 0 || data.action === 'none') {
-        obstacleStatusDiv.innerHTML = '<div class="label">OBSTACLE DETECTION STATUS</div><div class="value">Chờ phát hiện vật cản...</div>';
-        return;
-      }
-      
-      const age = Date.now() - data.time;
-      let statusText = `<div class="label">OBSTACLE DETECTION (${(age/1000).toFixed(1)}s ago)</div>`;
-      statusText += `<div style="margin-top:6px">⚠️ <strong>Vật cản: ${data.distance.toFixed(1)} cm</strong></div>`;
-      
-      if (data.action === 'square_right') {
-        statusText += '<div style="margin-top:4px"><span style="color:#ef4444">⬛ HÌNH VUÔNG</span> → Rẽ <strong>PHẢI</strong> ➡️</div>';
-      } else if (data.action === 'circle_left') {
-        statusText += '<div style="margin-top:4px"><span style="color:#22c55e">⚫ HÌNH TRÒN</span> → Rẽ <strong>TRÁI</strong> ⬅️</div>';
-      } else if (data.action === 'unknown_left') {
-        statusText += '<div style="margin-top:4px"><span class="yellow">❓ Không nhận diện</span> → Rẽ <strong>TRÁI</strong> (mặc định)</div>';
-      } else if (data.action === 'white_right') {
-        statusText += '<div style="margin-top:4px"><span style="color:#e5e7eb">● TRẮNG (backup)</span> → Rẽ <strong>PHẢI</strong></div>';
-      } else if (data.action === 'dark_left') {
-        statusText += '<div style="margin-top:4px"><span style="color:#9ca3af">● ĐEN (backup)</span> → Rẽ <strong>TRÁI</strong></div>';
-      }
-      
-      obstacleStatusDiv.innerHTML = statusText;
-    }catch(e){console.error('Obstacle status error:', e);}
-  }
 
   refreshMode();
   refreshSpeed();
-  setInterval(refreshObstacleStatus, 500); // Cập nhật mỗi 500ms
+  // Đã bỏ hiển thị OBSTACLE DETECTION STATUS nên không cần poll /api/obstacle_status nữa
 
   // OpenCV Shape detection update
   async function refreshColor(){
