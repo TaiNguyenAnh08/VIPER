@@ -32,7 +32,7 @@ const char *password = "12345678";
 
 // OpenCV server IP (Python server on PC/Laptop)
 // Change this to your PC's IP when connected to VIPER WiFi
-#define OPENCV_SERVER_IP "192.168.4.2"
+#define OPENCV_SERVER_IP "192.168.4.7"
 #define OPENCV_SERVER_PORT 5000
 
 // Web server cho API endpoint
@@ -142,7 +142,7 @@ void setup() {
 #endif
 
   // ===== STATIC IP: cố định IP = 192.168.4.3 (tránh DHCP cấp IP ngẫu nhiên) =====
-  // Laptop Python server = 192.168.4.2, ESP32-CAM = 192.168.4.3
+  // Laptop Python server = 192.168.4.7, ESP32-CAM = 192.168.4.3
   WiFi.config(
     IPAddress(192, 168, 4, 3),   // IP tĩnh cho ESP32-CAM
     IPAddress(192, 168, 4, 1),   // Gateway = VIPER AP
