@@ -1,5 +1,6 @@
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include "img_converters.h"
@@ -32,7 +33,7 @@ const char *password = "12345678";
 
 // OpenCV server IP (Python server on PC/Laptop)
 // Change this to your PC's IP when connected to VIPER WiFi
-#define OPENCV_SERVER_IP "192.168.4.7"
+#define OPENCV_SERVER_IP "192.168.4.4"
 #define OPENCV_SERVER_PORT 5000
 
 // Web server cho API endpoint
@@ -142,7 +143,7 @@ void setup() {
 #endif
 
   // ===== STATIC IP: cố định IP = 192.168.4.3 (tránh DHCP cấp IP ngẫu nhiên) =====
-  // Laptop Python server = 192.168.4.7, ESP32-CAM = 192.168.4.3
+  // Laptop Python server = 192.168.4.7, ESP32-CAM = 192.168.4.3 (thay đổi tùy máy)
   WiFi.config(
     IPAddress(192, 168, 4, 3),   // IP tĩnh cho ESP32-CAM
     IPAddress(192, 168, 4, 1),   // Gateway = VIPER AP
@@ -165,6 +166,16 @@ void setup() {
   
   Serial.println("\n[OK] WiFi connected to VIPER!");
   Serial.print("VIPER-CAM IP: ");
+  Serial.println(WiFi.localIP());
+
+  // ===================== mDNS: esp32cam.local =====================
+  if (!MDNS.begin("esp32cam")) {
+    Serial.println("[mDNS] Failed to start mDNS responder");
+  } else {
+    Serial.println("[mDNS] mDNS responder started: http://esp32cam.local");
+    MDNS.addService("http", "tcp", 80);   // API server
+    MDNS.addService("http", "tcp", 81);   // Stream server
+  }
   
   // API endpoint: /detect_shape - OpenCV shape detection
   apiServer.on("/detect_shape", HTTP_GET, []() {

@@ -16,18 +16,20 @@
 2. Đợi WiFi AP "VIPER" xuất hiện
 3. Kết nối PC/Laptop vào WiFi: **VIPER** (password: `12345678`)
 
-### Bước 2: Lấy IP của PC
+### Bước 2: (Tùy chọn) Lấy IP của PC cho Python
 ```powershell
 ipconfig
 ```
-Tìm adapter "VIPER", ghi lại IP (VD: `192.168.4.3` hoặc `192.168.4.4`)
+Tìm adapter "VIPER", ghi lại IP (VD: `192.168.4.4`, `192.168.4.7`, ...)
 
-### Bước 3: Update ESP32-CAM Code
+> Lưu ý: mDNS chỉ dùng cho ESP32-CAM (esp32cam.local). Python server vẫn dùng IP số, nên chỉ cần chạy `ipconfig` khi muốn chỉnh lại IP cho `OPENCV_SERVER_IP`.
+
+### Bước 3: Update ESP32-CAM Code (Python server IP)
 Mở file: `d:\cuoikynhung\CameraWebServer\CameraWebServer.ino`
 
-Sửa dòng 35:
+Sửa dòng define:
 ```cpp
-#define OPENCV_SERVER_IP "192.168.4.3"  // ← Thay bằng IP PC của bạn
+#define OPENCV_SERVER_IP "192.168.4.x"  // ← Thay bằng IP PC của bạn (từ ipconfig)
 ```
 
 ### Bước 4: Upload Code
@@ -66,8 +68,10 @@ curl http://localhost:5000/health
 ```
 Serial Monitor ESP32-CAM:
 - "WiFi connected to VIPER!"
+- "VIPER-CAM IP: 192.168.4.3" (hoặc IP khác nếu đổi cấu hình)
+- "[mDNS] mDNS responder started: http://esp32cam.local"
 - "API ready at /detect_shape"
-- "Server: http://192.168.4.x:5000"
+- "Server: http://192.168.4.x:5000"  (x là IP PC/Laptop)
 ```
 
 ### VIPER OK?
@@ -80,7 +84,7 @@ Serial Monitor VIPER:
 ### Web UI OK?
 ```
 http://192.168.4.1
-- Camera livestream hiển thị
+- Camera livestream hiển thị từ http://esp32cam.local:81/stream
 - "LINE FOLLOWING" button bật/tắt được
 - Motor control buttons hoạt động
 ```

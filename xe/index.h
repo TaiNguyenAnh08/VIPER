@@ -88,7 +88,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div class="card cam-card">
       <h2>VIPER CAM</h2>
       <div class="cam-container">
-        <img id="camImg" src="http://192.168.4.3:81/stream" alt="Camera stream" />
+        <img id="camImg" src="http://esp32cam.local:81/stream" alt="Camera stream" />
       </div>
       <div id="camStatus" class="cam-status">Loading camera...</div>
     </div>
@@ -222,7 +222,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   const camImg = document.getElementById('camImg');
   const camStatus = document.getElementById('camStatus');
-  const CAM_URL = 'http://192.168.4.3:81/stream';
+  const CAM_URL = 'http://esp32cam.local:81/stream';
 
   function reloadStream() {
     camImg.src = CAM_URL + '?t=' + Date.now();

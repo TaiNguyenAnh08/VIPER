@@ -590,7 +590,8 @@ String detectShapeFromCamera() {
   HTTPClient http;
   
   Serial.println("[CV] Requesting shape detection from camera...");
-  http.begin("http://192.168.4.3/detect_shape");
+  // Ưu tiên dùng mDNS hostname của ESP32-CAM (esp32cam.local)
+  http.begin("http://esp32cam.local/detect_shape");
   http.setTimeout(8000); // Timeout 8s (đủ cho camera + Python server inference)
   
   int httpCode = http.GET();
