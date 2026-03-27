@@ -1,10 +1,12 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <WebServer.h>
 #include "do_line.h"
 
 // ================= External from xe.ino =================
 extern String lastDetectedShape;
+extern WebServer server;
 
 /* ================= ESP32 30P + L298N + analogWrite =================
    Mapping:
@@ -44,8 +46,8 @@ extern String lastDetectedShape;
 // ================= HC-SR04 =================
 #define TRIG_PIN 21
 #define ECHO_PIN 19
-const float OBSTACLE_TH_CM   = 25.0f;    // 25cm - đủ xa để camera detect màu rõ ràng
-const unsigned long US_TIMEOUT = 30000;  // 30 ms (~5m)
+const float OBSTACLE_TH_CM   = 25.0f;    
+const unsigned long US_TIMEOUT = 30000; 
 
 // ==== Biến cho SR04 non-blocking ====
 enum USState { US_IDLE, US_WAIT_HIGH, US_WAIT_LOW };
@@ -82,13 +84,13 @@ void IRAM_ATTR echo_isr() {
 // ================= Màu vật cản detected =================
 String last_detected_shape = "none";         // Màu vật cản phát hiện gần nhất
 float obstacle_last_distance = 0.0f;         // Khoảng cách vật cản gần nhất (cm)
-String obstacle_last_action = "none";        // Hành động: red→right, green→left, none→default
+String obstacle_last_action = "none";        // Hành động đã thực hiện cho vật cản (LEFT/RIGHT/NONE)
 unsigned long obstacle_last_time = 0;        // Thời điểm phát hiện vật cản
 
 // ================= Thông số cơ khí =================
 const float WHEEL_RADIUS_M = 0.0325f;
 const float CIRC           = 2.0f * 3.1415926f * WHEEL_RADIUS_M; // m/vòng
-const float TRACK_WIDTH_M  = 0.0950f;
+const float TRACK_WIDTH_M  = 0.070f;
 
 // ================= Tham số điều khiển =================
 float v_base   = 0.5f;     // m/s cơ sở cho line-follow
@@ -306,8 +308,9 @@ void ultrasonic_update() {
 
 // API: trả về giá trị mới nếu có, ngược lại trả giá trị gần nhất
 // FIX: KHÔNG BAO GIỜ trả về -1 (gây false positive obstacle detection)
-float readDistanceCM_nonblock() {
+float readDistanceCM_nonblock(bool *is_new = nullptr) {
   ultrasonic_update();
+  if (is_new) *is_new = ultrasonic_new;
   if (ultrasonic_new) {
     ultrasonic_new = false;
     if (ultrasonic_distance_cm > 0 && ultrasonic_distance_cm < 400) {
@@ -362,6 +365,7 @@ void spin_left_deg(double deg, int pwmAbs){
 
   while (true){
     // EMERGENCY: Check abort flag EVERY LOOP!
+    server.handleClient();
     if (!g_line_enabled) {
       motorsStop();
       return;
@@ -402,6 +406,7 @@ void spin_right_deg(double deg, int pwmAbs){
 
   while (true){
     // EMERGENCY: Check abort flag EVERY LOOP!
+    server.handleClient();
     if (!g_line_enabled) {
       motorsStop();
       return;
@@ -436,6 +441,7 @@ void move_forward_distance(double dist_m, int pwmAbs){
   motorWriteLR_signed(+pwmAbs, +pwmAbs);
   while (true){
     // EMERGENCY: Check abort flag
+    server.handleClient();
     if (!g_line_enabled){ motorsStop(); return; }
     
     // Timeout safety
@@ -467,6 +473,7 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
   motorWriteLR_signed(+pwmAbs, +pwmAbs);
   
   while (true){
+    server.handleClient();
     if (!g_line_enabled){ motorsStop(); return false; }
     
     // Timeout safety
@@ -488,7 +495,7 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
     // Nếu bất kỳ sensor thấy line → FOUND!
     if (L2 || L1 || M || R1 || R2){
       Serial.println("[SEARCH] ✓ LINE FOUND!");
-      motorsStop(); 
+       
       return true;
     }
     
@@ -513,6 +520,7 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
   int step_count = 0;
   
   while (step_count < EXPAND_STEPS && (millis() - start_time < TIMEOUT_MS)) {
+    server.handleClient();
     if (!g_line_enabled){ motorsStop(); return false; }
     
     // Quay theo last_seen direction + tiến
@@ -543,6 +551,7 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
     unsigned long step_start = millis();
     
     while (millis() - step_start < 2000) {  // 2 giây tiến mỗi step
+      server.handleClient();
       if (!g_line_enabled){ motorsStop(); return false; }
       
       // Check sensor
@@ -572,46 +581,39 @@ bool move_forward_distance_until_line(double dist_m, int pwmAbs){
 }
 
 // ================= DETECT SHAPE FROM CAMERA (OPENCV) =================
-// Cache để tránh HTTP calls liên tục
+// Mỗi lần gọi đều request kết quả mới từ ESP32-CAM + OpenCV server
+// (bỏ cache để tránh dùng lại kết quả cũ sau khi đã né xong)
 unsigned long lastShapeDetectTime = 0;
 String cachedObstacleShape = "none";
-const unsigned long SHAPE_CACHE_DURATION = 3000; // Cache 3 giây
+const unsigned long SHAPE_CACHE_DURATION = 3000; // giữ lại nếu sau này muốn debug
 
 String detectShapeFromCamera() {
-  // Nếu vừa detect trong 3 giây qua → dùng cache
-  if (millis() - lastShapeDetectTime < SHAPE_CACHE_DURATION && cachedObstacleShape != "none") {
-    Serial.printf("[CV] Using cached shape: %s (age: %lu ms)\n", 
-                  cachedObstacleShape.c_str(), 
-                  millis() - lastShapeDetectTime);
-    return cachedObstacleShape;
-  }
-  
   // ================= WiFi HTTP Communication =================
   HTTPClient http;
-  
-  Serial.println("[CV] Requesting shape detection from camera...");
+
+  Serial.println("Đợi detect shape từ camera...");
   // Ưu tiên dùng mDNS hostname của ESP32-CAM (esp32cam.local)
   http.begin("http://esp32cam.local/detect_shape");
   http.setTimeout(8000); // Timeout 8s (đủ cho camera + Python server inference)
-  
+
   int httpCode = http.GET();
-  
+
   if (httpCode == HTTP_CODE_OK) {
     String payload = http.getString();
     Serial.printf("[CV] Response: %s\n", payload.c_str());
-    
+
     // Parse JSON: {"shape":"left"}
     StaticJsonDocument<256> doc;
     DeserializationError error = deserializeJson(doc, payload);
-    
+
     if (!error) {
       String shape = doc["shape"].as<String>();
       Serial.printf("[CV] Detected shape: %s\n", shape.c_str());
-      
-      // Cache kết quả
+
+      // Lưu lại kết quả & thời điểm để debug/UI nếu cần
       cachedObstacleShape = shape;
       lastShapeDetectTime = millis();
-      
+
       http.end();
       return shape;
     } else {
@@ -620,7 +622,7 @@ String detectShapeFromCamera() {
   } else {
     Serial.printf("[CV] HTTP error: %d\n", httpCode);
   }
-  
+
   http.end();
   return "none";
 }
@@ -632,7 +634,7 @@ void avoidTurnLeft(){
   const int TURN_PWM = 120;
   const int FWD_PWM  = 130;
 
-  Serial.println("\n>>> AVOIDANCE RIGHT (Circle → turn LEFT) <<<");
+  Serial.println("\n>>> tránh về bên trái (vuông/ none) <<<");
   
   // [1] Quay TRÁI 60° để tránh vật cản
   Serial.println("  [1] Turn LEFT 60°");
@@ -667,17 +669,20 @@ void avoidTurnLeft(){
   // [6] Tiến dò line (tối đa 40cm)
   Serial.println("  [6] Search for line (40cm max)");
   bool seen = move_forward_distance_until_line(0.40, FWD_PWM);
-  motorsStop(); delay(300);
-  if (!g_line_enabled) return;
-  
+    
+
+    
   // [7] Nếu chưa thấy line → quay PHẢI 30° để điều chỉnh
   if (!seen) {
     Serial.println("  [7] Line not found - turn RIGHT 30° to adjust");
     spin_right_deg(30.0, TURN_PWM);
     motorsStop(); delay(300);
+  } else{
+    recovering = false;  // đã tìm thấy line → không còn recovering nữa
+    resetBothPID();    // reset PID sau khi đã tìm lại line
   }
 
-  Serial.println(">>> RIGHT AVOIDANCE DONE <<<\n");
+  Serial.println(">>> Đã rẽ trái xong <<<\n");
 }
 
 // ================= TRÁNH VẬT CẢN: RẼ PHẢI (Circle) =================
@@ -687,7 +692,7 @@ void avoidTurnRight(){
   const int TURN_PWM = 120;
   const int FWD_PWM  = 130;
 
-  Serial.println("\n>>> AVOIDANCE LEFT (Square → turn RIGHT) <<<");
+  Serial.println("\n>>> tránh về bên phải (tròn) <<<");
   
   // [1] Quay PHẢI 60° để tránh vật cản
   Serial.println("  [1] Turn RIGHT 60°");
@@ -722,17 +727,19 @@ void avoidTurnRight(){
   // [6] Tiến dò line (tối đa 40cm)
   Serial.println("  [6] Search for line (40cm max)");
   bool seen = move_forward_distance_until_line(0.40, FWD_PWM);
-  motorsStop(); delay(300);
-  if (!g_line_enabled) return;
+ 
   
   // [7] Nếu chưa thấy line → quay TRÁI 30° để điều chỉnh
   if (!seen) {
     Serial.println("  [7] Line not found - turn LEFT 30° to adjust");
     spin_left_deg(30.0, TURN_PWM);
     motorsStop(); delay(300);
+  } else{
+    recovering = false;  // đã tìm thấy line → không còn recovering nữa
+    resetBothPID();    // reset PID sau khi đã tìm lại line
   }
 
-  Serial.println(">>> LEFT AVOIDANCE DONE <<<\n");
+  Serial.println(">>> né phải xong <<<\n");
 }
 
 // API abort - RESET TẤT CẢ STATE và DỬNG XE
@@ -929,19 +936,25 @@ void do_line_loop() {
   // Điều kiện: PHẢI có ít nhất 1 sensor đang ON line + không đang recovery
   // ================================================================
   {
-    float dist = readDistanceCM_nonblock();
+    bool is_new_dist = false;
+    float dist = readDistanceCM_nonblock(&is_new_dist);
 
     static int  obs_hits    = 0;
     static unsigned long obs_t = 0;
 
-    // CHỈ tích lũy hit khi dist trong khoảng hợp lệ (5-25cm)
-    // dist < 5cm = nhiễu từ sàn nhà/sensor error
-    // dist > 25cm = không có vật cản
-    if (dist >= 5.0f && dist < OBSTACLE_TH_CM) {
-      if (millis() - obs_t > 600) obs_hits = 0;   // reset nếu gap > 600ms
-      obs_hits++;
-      obs_t = millis();
-    } else {
+    // CHỈ cộng dồn khi có kết quả KHOẢNG CÁCH MỚI (xong 1 chu kỳ ping)
+    // Sửa lỗi: tránh đọc 1 kết quả nhiễu cũ 3 lần trong 3ms dẫn tới "chứng xe" (đứng hình liên tục)
+    if (is_new_dist) {
+      if (dist >= 5.0f && dist < OBSTACLE_TH_CM) {
+        obs_hits++;
+        obs_t = millis();
+      } else {
+        obs_hits = 0;
+      }
+    }
+
+    // Reset nếu gap > 600ms (giữa các hit)
+    if (millis() - obs_t > 600) {
       obs_hits = 0;
     }
 
@@ -956,7 +969,7 @@ void do_line_loop() {
     // Trigger OBSTACLE AVOIDANCE chỉ khi:
     // 1. HIỆN TẠI đang thấy line (ít nhất 1 sensor ON) ⭐️⭐️⭐️
     // 2. KHÔNG đang recovery mode
-    // 3. 3 hit liên tiếp trong 600ms (giảm false positive)
+    // 3. 3 hit liên tiếp (mỗi hit mất 80ms => ~240ms nhận diện thực sự)
     if (currently_on_line && !recovering && obs_hits >= 3) {
       Serial.printf(">>> OBSTACLE! dist=%.1fcm - STOPPING\n", dist);
       motorsStop();
@@ -991,6 +1004,11 @@ void do_line_loop() {
         obstacle_last_action = "unknown_left";
         avoidTurnLeft();
       }
+
+      // Xóa dứt điểm kết quả nhiễu của siêu âm phát sinh trong TƯỚNG XE QUAY (timeout/stale)
+      echo_done = false;
+      ultrasonic_new = false;
+      ultrasonic_last_valid = 999.0f; // ép làm xa
 
       // Reset về trạng thái line-follow bình thường
       recovering = false;
